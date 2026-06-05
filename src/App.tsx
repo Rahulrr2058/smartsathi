@@ -18,7 +18,11 @@ import {
   X,
   Tag,
   Store,
-  Package
+  Package,
+  LogOut,
+  Mail,
+  Lock,
+  Upload
 } from 'lucide-react';
 import { createWorker } from 'tesseract.js';
 
@@ -26,6 +30,13 @@ import { createWorker } from 'tesseract.js';
 const DEFAULT_URL = "https://zzjxgkrzpakbrleeduhq.supabase.co";
 const DEFAULT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6anhna3J6cGFrYnJsZWVkdWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwODMxODgsImV4cCI6MjA5NTY1OTE4OH0.v1Nhqm4BlDp7fdcNExgVx9Bl4eLRIihI6xfJe5su0zo";
 const DEFAULT_STORE_ID = "b0298a16-4ba9-4f36-8aee-d853785213a2"; // Sagarmatha Cosmetics store ID
+
+interface ProductSize {
+  id?: string;
+  product_id?: string;
+  size: string;
+  stock: number;
+}
 
 interface Product {
   id: string;
@@ -44,6 +55,7 @@ interface Product {
   brand_id: string | null;
   subcategory_id: string | null;
   created_at?: string;
+  product_sizes?: ProductSize[];
 }
 
 interface Category {
@@ -70,6 +82,15 @@ export default function App() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [dbClient, setDbClient] = useState<SupabaseClient | null>(null);
   const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected');
+
+  // Authentication Configuration
+  const [session, setSession] = useState<any>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authError, setAuthError] = useState("");
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
 
   // App Data
   const [products, setProducts] = useState<Product[]>([]);
@@ -108,6 +129,28 @@ export default function App() {
     subcategory_id: ''
   });
 
+  // Size-stock configurations in the form
+  const [formSizes, setFormSizes] = useState<{ size: string; stock: number }[]>([]);
+
+  // Image upload states & ref
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Inline taxonomy add states
+  const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
+  const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
+  const [isAddSubcategoryOpen, setIsAddSubcategoryOpen] = useState(false);
+
+  const [newBrandName, setNewBrandName] = useState("");
+  const [newBrandDesc, setNewBrandDesc] = useState("");
+
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryDesc, setNewCategoryDesc] = useState("");
+
+  const [newSubcategoryName, setNewSubcategoryName] = useState("");
+  const [newSubcategoryDesc, setNewSubcategoryDesc] = useState("");
+  const [newSubcategoryCategory, setNewSubcategoryCategory] = useState("");
+
   // Media Refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -127,6 +170,75 @@ export default function App() {
       }
     }
   }, [supabaseUrl, supabaseKey]);
+
+  // Auth Session Listener
+  useEffect(() => {
+    if (!dbClient) {
+      setIsAuthLoading(false);
+      return;
+    }
+
+    setIsAuthLoading(true);
+    dbClient.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAuthLoading(false);
+    }).catch(() => {
+      setIsAuthLoading(false);
+    });
+
+    const { data: { subscription } } = dbClient.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
+  }, [dbClient]);
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dbClient || !authEmail || !authPassword) return;
+
+    setIsSubmittingAuth(true);
+    setAuthError("");
+    try {
+      if (authMode === 'login') {
+        const { error } = await dbClient.auth.signInWithPassword({
+          email: authEmail,
+          password: authPassword
+        });
+        if (error) throw error;
+        confetti({
+          particleCount: 60,
+          spread: 40,
+          origin: { y: 0.8 },
+          colors: ['#a855f7', '#10b981']
+        });
+      } else {
+        const { error } = await dbClient.auth.signUp({
+          email: authEmail,
+          password: authPassword
+        });
+        if (error) throw error;
+        alert("Sign up successful! Please check your email inbox for a confirmation link, or log in if your instance has auto-confirm enabled.");
+      }
+    } catch (err: any) {
+      console.error("Authentication error:", err);
+      setAuthError(err.message || "Failed to authenticate.");
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!dbClient) return;
+    try {
+      await dbClient.auth.signOut();
+      setSession(null);
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+  };
 
   // Handle worker initialization on mount
   useEffect(() => {
@@ -171,7 +283,7 @@ export default function App() {
     setIsLoadingData(true);
     try {
       const [prodRes, catRes, brandRes, subcatRes] = await Promise.all([
-        client.from('products').select('*').eq('store_id', storeId).order('created_at', { ascending: false }),
+        client.from('products').select('*, product_sizes(*)').eq('store_id', storeId).order('created_at', { ascending: false }),
         client.from('categories').select('*').eq('store_id', storeId),
         client.from('brands').select('*').eq('store_id', storeId),
         client.from('subcategories').select('*').eq('store_id', storeId),
@@ -253,7 +365,27 @@ export default function App() {
     };
   }, [autoScan, isCameraActive, products]);
 
-  // Capture video frame and run OCR
+  // Helper for fuzzy string matching (Levenshtein Distance)
+  const getSimilarity = (a: string, b: string): number => {
+    const track = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+    for (let i = 0; i <= a.length; i += 1) track[0][i] = i;
+    for (let j = 0; j <= b.length; j += 1) track[j][0] = j;
+    for (let j = 1; j <= b.length; j += 1) {
+      for (let i = 1; i <= a.length; i += 1) {
+        const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+        track[j][i] = Math.min(
+          track[j - 1][i] + 1, // deletion
+          track[j][i - 1] + 1, // insertion
+          track[j - 1][i - 1] + indicator // substitution
+        );
+      }
+    }
+    const distance = track[b.length][a.length];
+    const maxLength = Math.max(a.length, b.length);
+    return maxLength === 0 ? 1.0 : 1.0 - distance / maxLength;
+  };
+
+  // Capture video frame and run OCR within a cropped central region
   const captureAndScan = async () => {
     if (!videoRef.current || !canvasRef.current || !ocrWorkerRef.current || isOcrLoading) return;
 
@@ -262,24 +394,60 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas dimensions matching video feed
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    const vWidth = video.videoWidth || 640;
+    const vHeight = video.videoHeight || 480;
 
-    // Draw video frame to canvas
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Define scanning reticle box (75% width, 45% height in center)
+    const cropW = Math.round(vWidth * 0.75);
+    const cropH = Math.round(vHeight * 0.45);
+    const cropX = Math.round((vWidth - cropW) / 2);
+    const cropY = Math.round((vHeight - cropH) / 2);
 
-    // Apply high contrast canvas filter to improve OCR accuracy
+    // Scale up the crop by 1.5x for higher OCR text resolution
+    const scale = 1.5;
+    canvas.width = Math.round(cropW * scale);
+    canvas.height = Math.round(cropH * scale);
+
+    // Draw only the cropped reticle area from video to canvas
+    ctx.drawImage(
+      video,
+      cropX,
+      cropY,
+      cropW,
+      cropH,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+
+    // Apply adaptive contrast thresholding on the crop to normalize lighting
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imgData.data;
-    for (let i = 0; i < data.length; i += 4) {
+    
+    // Calculate average luminance to adapt the threshold dynamically
+    let totalGray = 0;
+    const len = data.length;
+    for (let i = 0; i < len; i += 4) {
       const r = data[i];
       const g = data[i+1];
       const b = data[i+2];
-      // Grayscale conversion
-      const gray = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      // High contrast thresholding
-      const value = gray > 120 ? 255 : 0;
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      totalGray += gray;
+    }
+    const avgGray = totalGray / (len / 4);
+    
+    // Adaptive threshold based on average luminance (clamped between 50 and 200)
+    const threshold = Math.max(50, Math.min(200, avgGray * 0.9));
+
+    // Apply dynamic thresholding
+    for (let i = 0; i < len; i += 4) {
+      const r = data[i];
+      const g = data[i+1];
+      const b = data[i+2];
+      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      
+      const value = gray > threshold ? 255 : 0;
       data[i] = value;
       data[i+1] = value;
       data[i+2] = value;
@@ -298,17 +466,19 @@ export default function App() {
     }
   };
 
-  // Clean scanned text & match with catalog
+  // Clean scanned text & match with catalog using fuzzy word matching
   const processScannedText = (text: string) => {
     setScannedText(text);
     if (!text.trim()) return;
 
     // Tokenize text into alphanumeric words longer than 2 characters
+    // Filter out common category/stop words to prevent false matching
+    const stopWords = ['and', 'for', 'with', 'the', 'gel', 'cream', 'ml', 'gm', 'pack', 'body', 'face', 'skin', 'wash', 'oil', 'organic', 'natural'];
     const words = text
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
       .split(/\s+/)
-      .filter(w => w.length > 2 && !['and', 'for', 'with', 'the', 'gel', 'cream', 'ml', 'gm', 'pack'].includes(w));
+      .filter(w => w.length > 2 && !stopWords.includes(w));
 
     setDetectedKeywords(words);
 
@@ -318,17 +488,36 @@ export default function App() {
       return;
     }
 
-    // Match products based on overlapping tokens
+    // Match products based on overlapping tokens and fuzzy similarity
     let bestProduct: Product | null = null;
     let highestScore = 0;
 
     products.forEach(product => {
       const productNameLower = product.name.toLowerCase();
+      const productWords = productNameLower
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 2);
+
       let score = 0;
 
       words.forEach(word => {
+        // Direct substring match gets higher weight
         if (productNameLower.includes(word)) {
-          score += word.length; // Weigh longer word matches higher
+          score += word.length * 1.5;
+        } else {
+          // Fuzzy match against individual words in product name
+          let bestWordSim = 0;
+          productWords.forEach(pw => {
+            const sim = getSimilarity(word, pw);
+            if (sim > bestWordSim) {
+              bestWordSim = sim;
+            }
+          });
+          
+          if (bestWordSim >= 0.75) {
+            score += word.length * bestWordSim;
+          }
         }
       });
 
@@ -338,7 +527,7 @@ export default function App() {
       }
     });
 
-    // We consider score > 5 to be a valid match (about 1-2 words matched fully)
+    // We consider score >= 5 to be a valid match (about 1-2 words matched fully or partially)
     if (bestProduct && highestScore >= 5) {
       setMatchedProduct(bestProduct);
       setScanResult('match');
@@ -375,6 +564,7 @@ export default function App() {
       brand_id: brands[0]?.id || '',
       subcategory_id: subcategories[0]?.id || ''
     });
+    setFormSizes([{ size: 'Standard', stock: 10 }]);
     setIsFormOpen(true);
   };
 
@@ -396,7 +586,134 @@ export default function App() {
       brand_id: product.brand_id || '',
       subcategory_id: product.subcategory_id || ''
     });
+    setFormSizes(
+      product.product_sizes && product.product_sizes.length > 0
+        ? product.product_sizes.map(ps => ({ size: ps.size, stock: ps.stock }))
+        : [{ size: 'Standard', stock: 0 }]
+    );
     setIsFormOpen(true);
+  };
+
+  const compressImage = async (file: File): Promise<Blob> => {
+    if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
+      return file;
+    }
+    
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDimension = 1200;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > height) {
+            if (width > maxDimension) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            }
+          } else {
+            if (height > maxDimension) {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(file);
+            return;
+          }
+          
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                resolve(blob);
+              } else {
+                resolve(file);
+              }
+            },
+            'image/webp',
+            0.82
+          );
+        };
+        img.onerror = () => resolve(file);
+      };
+      reader.onerror = () => resolve(file);
+    });
+  };
+
+  const handleUploadMultiple = async (files: File[]) => {
+    if (!dbClient) {
+      alert("Database client is not connected.");
+      return;
+    }
+    
+    setIsUploadingImages(true);
+    const uploadedUrls: string[] = [];
+    
+    try {
+      for (const file of files) {
+        const compressedBlob = await compressImage(file);
+        
+        const timestamp = Date.now();
+        const randomStr = Math.random().toString(36).substring(2, 6);
+        const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        const fileName = `product-${baseName || 'image'}-${timestamp}-${randomStr}.webp`;
+        const filePath = `products/${fileName}`;
+        
+        const { error: uploadError } = await dbClient.storage
+          .from('product-images')
+          .upload(filePath, compressedBlob, {
+            contentType: 'image/webp'
+          });
+          
+        if (uploadError) {
+          throw uploadError;
+        }
+        
+        const { data: { publicUrl } } = dbClient.storage
+          .from('product-images')
+          .getPublicUrl(filePath);
+          
+        if (publicUrl) {
+          uploadedUrls.push(publicUrl);
+        }
+      }
+      
+      setFormData(prev => {
+        const currentImages = prev.images
+          ? prev.images.split(',').map(s => s.trim()).filter(Boolean)
+          : [];
+        const merged = [...currentImages, ...uploadedUrls];
+        return {
+          ...prev,
+          images: merged.join(', ')
+        };
+      });
+      
+      confetti({
+        particleCount: 40,
+        spread: 30,
+        colors: ['#a855f7', '#10b981']
+      });
+      
+    } catch (err: any) {
+      console.error("Image upload failed:", err);
+      alert(`Image upload failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsUploadingImages(false);
+    }
   };
 
   const handleFormSave = async (e: React.FormEvent) => {
@@ -427,9 +744,11 @@ export default function App() {
     };
 
     try {
+      let productId = "";
       if (formType === 'add') {
         const { data, error } = await dbClient.from('products').insert(payload).select().single();
         if (error) throw error;
+        productId = data.id;
         // If matched product was being added, update scanner match
         if (data) setMatchedProduct(data);
         alert("Product created successfully!");
@@ -437,12 +756,26 @@ export default function App() {
         if (!activeProduct) return;
         const { error } = await dbClient.from('products').update(payload).eq('id', activeProduct.id);
         if (error) throw error;
+        productId = activeProduct.id;
         // Update local scanned match if it was the edited product
         if (matchedProduct && matchedProduct.id === activeProduct.id) {
           setMatchedProduct({ ...matchedProduct, ...payload });
         }
         alert("Product updated successfully!");
       }
+
+      // Sync sizes and stocks
+      await dbClient.from('product_sizes').delete().eq('product_id', productId);
+      if (formSizes.length > 0) {
+        const sizeRows = formSizes.map(fs => ({
+          product_id: productId,
+          size: fs.size.trim() || 'Standard',
+          stock: fs.stock || 0
+        }));
+        const { error: sizesError } = await dbClient.from('product_sizes').insert(sizeRows);
+        if (sizesError) throw sizesError;
+      }
+
       setIsFormOpen(false);
       fetchData(dbClient);
     } catch (err: any) {
@@ -475,11 +808,217 @@ export default function App() {
     }
   };
 
+  // Save handlers for inline taxonomy creation
+  const handleCreateBrand = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dbClient || !newBrandName) return;
+
+    try {
+      const slug = newBrandName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const { data, error } = await dbClient.from('brands').insert({
+        name: newBrandName,
+        slug,
+        description: newBrandDesc || null,
+        store_id: storeId
+      }).select().single();
+
+      if (error) throw error;
+      alert(`Brand "${newBrandName}" created!`);
+      
+      // Update form select selection to new brand
+      setFormData(prev => ({ ...prev, brand_id: data.id }));
+      setIsAddBrandOpen(false);
+      setNewBrandName("");
+      setNewBrandDesc("");
+      fetchData(dbClient);
+    } catch (err: any) {
+      alert(`Failed to create brand: ${err.message}`);
+    }
+  };
+
+  const handleCreateCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dbClient || !newCategoryName) return;
+
+    try {
+      const slug = newCategoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const { data, error } = await dbClient.from('categories').insert({
+        name: newCategoryName,
+        slug,
+        description: newCategoryDesc || null,
+        store_id: storeId
+      }).select().single();
+
+      if (error) throw error;
+      alert(`Category "${newCategoryName}" created!`);
+      
+      // Update form select selection to new category
+      setFormData(prev => ({ ...prev, category_id: data.id }));
+      setIsAddCategoryOpen(false);
+      setNewCategoryName("");
+      setNewCategoryDesc("");
+      fetchData(dbClient);
+    } catch (err: any) {
+      alert(`Failed to create category: ${err.message}`);
+    }
+  };
+
+  const handleCreateSubcategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const catId = newSubcategoryCategory || formData.category_id;
+    if (!dbClient || !newSubcategoryName || !catId) {
+      alert("Please select a parent category first.");
+      return;
+    }
+
+    try {
+      const slug = newSubcategoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const { data, error } = await dbClient.from('subcategories').insert({
+        name: newSubcategoryName,
+        slug,
+        description: newSubcategoryDesc || null,
+        category_id: catId,
+        store_id: storeId
+      }).select().single();
+
+      if (error) throw error;
+      alert(`Subcategory "${newSubcategoryName}" created!`);
+      
+      // Update form select selection to new subcategory
+      setFormData(prev => ({ ...prev, subcategory_id: data.id, category_id: catId }));
+      setIsAddSubcategoryOpen(false);
+      setNewSubcategoryName("");
+      setNewSubcategoryDesc("");
+      setNewSubcategoryCategory("");
+      fetchData(dbClient);
+    } catch (err: any) {
+      alert(`Failed to create subcategory: ${err.message}`);
+    }
+  };
+
   // Filtered products list
   const filteredProducts = products.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (p.slug && p.slug.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  if (isAuthLoading) {
+    return (
+      <div className="spinner-container">
+        <Loader2 className="animate-spin text-primary" size={48} />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="login-container">
+        <div className="glass-panel login-card">
+          <div style={{ textAlign: 'center' }}>
+            <Store className="text-primary" size={48} style={{ marginBottom: '12px' }} />
+            <h2 style={{ fontSize: '1.6rem', fontWeight: '800', marginBottom: '8px' }}>Sathi Smart CRM</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+              {authMode === 'login' ? 'Please sign in to access your scanner catalog' : 'Create an administrator account'}
+            </p>
+          </div>
+
+          {authError && (
+            <div className="auth-error-alert">
+              <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleAuthSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div className="input-group">
+              <Mail className="input-icon" size={18} />
+              <input
+                type="email"
+                className="form-input input-with-icon"
+                placeholder="Admin Email"
+                required
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+              />
+            </div>
+
+            <div className="input-group">
+              <Lock className="input-icon" size={18} />
+              <input
+                type="password"
+                className="form-input input-with-icon"
+                placeholder="Password"
+                required
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+              />
+            </div>
+
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '8px' }} disabled={isSubmittingAuth}>
+              {isSubmittingAuth ? <Loader2 className="animate-spin" size={18} /> : authMode === 'login' ? 'Sign In' : 'Sign Up'}
+            </button>
+          </form>
+
+          <div style={{ textAlign: 'center', fontSize: '0.88rem' }}>
+           
+            <button
+              type="button"
+              style={{ background: 'none', border: 'none', color: 'var(--primary)', fontWeight: '600', cursor: 'pointer', outline: 'none' }}
+              onClick={() => {
+                setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                setAuthError("");
+              }}
+            >
+              {/* {authMode === 'login' ? 'Register Account' : 'Sign In'} */}
+            </button>
+          </div>
+
+          {/* <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', textAlign: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem' }}
+              onClick={() => setIsConfigOpen(true)}
+            >
+              <Settings size={14} /> Connection Settings
+            </button>
+          </div> */}
+        </div>
+
+        {/* CONNECTION SETTINGS MODAL IN LOGIN SCREEN */}
+        {isConfigOpen && (
+          <div className="modal-overlay">
+            <div className="glass-panel modal-content" style={{ maxWidth: '500px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Settings className="text-primary" /> Connection Configuration</h2>
+                <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsConfigOpen(false)}><X size={18} /></button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>SUPABASE PROJECT URL</label>
+                  <input type="text" className="form-input" value={supabaseUrl} onChange={e => setSupabaseUrl(e.target.value)} placeholder="https://your-project.supabase.co" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>SUPABASE ANON/PUBLISHABLE KEY</label>
+                  <input type="password" className="form-input" value={supabaseKey} onChange={e => setSupabaseKey(e.target.value)} placeholder="eyJhbG..." />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>MERCHANT STORE ID (UUID)</label>
+                  <input type="text" className="form-input" value={storeId} onChange={e => setStoreId(e.target.value)} placeholder="b0298a16-..." />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
+                <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsConfigOpen(false)}>Cancel</button>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleSaveConfig}>Save & Connect</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -493,8 +1032,11 @@ export default function App() {
               <Database size={12} />
               {dbStatus === 'connected' ? 'DB Connected' : dbStatus === 'testing' ? 'Testing Connection' : 'DB Offline'}
             </span>
-            <button className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setIsConfigOpen(true)}>
+            <button className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setIsConfigOpen(true)} title="Connection Settings">
               <Settings size={18} />
+            </button>
+            <button className="btn btn-secondary" style={{ padding: '8px 12px', color: 'var(--accent-rose)', borderColor: 'rgba(244,63,94,0.2)' }} onClick={handleLogout} title="Log Out">
+              <LogOut size={18} />
             </button>
           </div>
         </div>
@@ -567,10 +1109,17 @@ export default function App() {
                     <video ref={videoRef} className="camera-video" playsInline muted></video>
                     <canvas ref={canvasRef} style={{ display: 'none' }}></canvas>
                     <div className={`scanner-overlay ${isOcrLoading ? 'scanning' : ''}`}>
-                      <div className="scanner-line"></div>
+                      <div className="scanner-target-box">
+                        <div className="scanner-corner corner-tl"></div>
+                        <div className="scanner-corner corner-tr"></div>
+                        <div className="scanner-corner corner-bl"></div>
+                        <div className="scanner-corner corner-br"></div>
+                        <div className="scanner-line"></div>
+                        <span className="scanner-hint">Align product label here</span>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="flex-responsive">
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                       <span className="pulse-dot"></span>
                       <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Live Camera Feed Active</span>
@@ -620,27 +1169,57 @@ export default function App() {
                     <div className="match-card">
                       <div className="match-image-container">
                         <img src={matchedProduct.images[0]} alt={matchedProduct.name} className="match-image" />
+                        <img
+                          src={matchedProduct.images?.[0] || "https://placehold.co/400x400/png?text=No+Image"}
+                          alt={matchedProduct.name}
+                          className="match-image"
+                        />
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                        <h3 style={{ fontSize: '1.2rem', fontWeight: '700' }}>{matchedProduct.name}</h3>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{matchedProduct.description || "No description provided."}</p>
-                        <div style={{ display: 'flex', gap: '16px', marginTop: 'auto', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: '0.75rem', background: 'rgba(124,58,237,0.15)', color: 'var(--primary)', padding: '4px 8px', borderRadius: '20px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          {brands.find(b => b.id === matchedProduct.brand_id)?.name || 'Generic Brand'}
+                        </span>
+                        <h3 style={{ fontSize: '1.4rem', fontWeight: '700', marginTop: '6px', marginBottom: '8px' }}>{matchedProduct.name}</h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', marginBottom: '14px', lineHeight: '1.5' }}>
+                          {matchedProduct.description || 'No product description provided.'}
+                        </p>
+                        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
                           <div>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>PRICE</span>
-                            <span style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--primary)' }}>Rs. {matchedProduct.price}</span>
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Selling Price</span>
+                            <span style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--primary)' }}>Rs. {matchedProduct.price}</span>
                           </div>
                           {matchedProduct.original_price && (
                             <div>
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>ORIGINAL PRICE</span>
-                              <span style={{ fontSize: '1.1rem', fontWeight: '500', textDecoration: 'line-through', color: 'var(--text-muted)' }}>Rs. {matchedProduct.original_price}</span>
+                              <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Original Price</span>
+                              <span style={{ fontSize: '1.1rem', textDecoration: 'line-through', color: 'var(--text-muted)' }}>Rs. {matchedProduct.original_price}</span>
                             </div>
                           )}
                           <div>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>STATUS</span>
-                            <span className={`badge ${matchedProduct.is_active ? 'badge-emerald' : 'badge-rose'}`} style={{ marginTop: '2px' }}>
-                              {matchedProduct.is_active ? 'Active' : 'Inactive'}
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Active Catalog Status</span>
+                            <span style={{ fontSize: '0.9rem', color: matchedProduct.is_active ? 'var(--accent-emerald)' : 'var(--accent-rose)', fontWeight: '600' }}>
+                              {matchedProduct.is_active ? 'Active (Visible)' : 'Inactive (Hidden)'}
                             </span>
                           </div>
+                        </div>
+
+                        {/* Sizes/Stock Inventory Details */}
+                        <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-glass)', paddingTop: '12px' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Inventory Stock & Variants</span>
+                          {matchedProduct.product_sizes && matchedProduct.product_sizes.length > 0 ? (
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              {matchedProduct.product_sizes.map((ps, index) => (
+                                <div key={index} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-glass)', padding: '6px 12px', borderRadius: '8px', fontSize: '0.88rem', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>{ps.size}</span>
+                                  <span style={{ height: '12px', width: '1px', background: 'var(--border-glass)' }}></span>
+                                  <span style={{ color: ps.stock > 0 ? 'var(--accent-emerald)' : 'var(--accent-rose)', fontWeight: '700' }}>
+                                    {ps.stock} in stock
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No size/stock configured yet.</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -656,66 +1235,41 @@ export default function App() {
                         <Plus size={16} /> Create New Product
                       </button>
                     </div>
-                    <div style={{ marginTop: '10px' }}>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Scanned Text Snippet: <span style={{ fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>"{scannedText.trim().replace(/\n/g, ' ')}"</span>
-                      </p>
-                      {detectedKeywords.length > 0 && (
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                          Extracted tokens for search: {detectedKeywords.join(', ')}
-                        </p>
-                      )}
-                    </div>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '10px' }}>
+                      Read Text: <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px', color: 'var(--text-primary)' }}>{scannedText}</code>
+                    </p>
                   </div>
                 )}
               </div>
             )}
           </section>
 
-          {/* CATALOGUE TABLE VIEW */}
-          <section className="glass-panel" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+          {/* STORE PRODUCTS CATALOG DIRECTORY */}
+          <section className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <h2>Store Catalog Directory</h2>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Browse and manage your full list of products.</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Search, review, edit, or delete items inside the target store inventory database.</p>
               </div>
-              <button className="btn btn-primary" onClick={() => {
-                setFormType('add');
-                setFormData({
-                  name: '',
-                  slug: '',
-                  description: '',
-                  price: '',
-                  original_price: '',
-                  images: '',
-                  is_active: true,
-                  is_featured: false,
-                  is_new: false,
-                  is_clearance: false,
-                  category_id: categories[0]?.id || '',
-                  brand_id: brands[0]?.id || '',
-                  subcategory_id: subcategories[0]?.id || ''
-                });
-                setIsFormOpen(true);
-              }}>
-                <Plus size={18} /> Add Product Manually
+              <button className="btn btn-primary" onClick={handleOpenAdd}>
+                <Plus size={16} /> Add Product
               </button>
             </div>
 
-            {/* SEARCH */}
-            <div style={{ position: 'relative', marginBottom: '20px' }}>
-              <Search style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} size={18} />
-              <input
-                type="text"
-                className="form-input"
-                placeholder="Search catalog by name or slug..."
-                style={{ paddingLeft: '44px' }}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ flex: 1, position: 'relative' }}>
+                <Search style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} size={18} />
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ paddingLeft: '40px' }}
+                  placeholder="Search catalog products by name, brand, or identifier slug..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+              </div>
             </div>
 
-            {/* PRODUCT GRID/TABLE */}
             {isLoadingData ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {[1, 2, 3, 4].map(i => (
@@ -738,10 +1292,10 @@ export default function App() {
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="btn btn-secondary" style={{ padding: '8px' }} onClick={() => handleOpenEdit(product)}>
+                      <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => handleOpenEdit(product)} title="Edit">
                         <Edit size={16} />
                       </button>
-                      <button className="btn btn-secondary" style={{ padding: '8px', color: 'var(--accent-rose)' }} onClick={() => handleDeleteProduct(product)}>
+                      <button className="btn btn-secondary" style={{ padding: '6px', color: 'var(--accent-rose)' }} onClick={() => handleDeleteProduct(product)} title="Delete">
                         <Trash2 size={16} />
                       </button>
                     </div>
@@ -749,9 +1303,8 @@ export default function App() {
                 ))}
               </div>
             ) : (
-              <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
-                <Package size={40} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
-                <p>No products found in database matching your filters.</p>
+              <div style={{ padding: '40px', textAlign: 'center', border: '1px dashed var(--border-glass)', borderRadius: '12px', color: 'var(--text-secondary)' }}>
+                No products found matching your search.
               </div>
             )}
           </section>
@@ -760,8 +1313,8 @@ export default function App() {
 
       {/* CONNECTION CONFIGURATION MODAL */}
       {isConfigOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-          <div className="glass-panel" style={{ maxWidth: '500px', width: '100%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div className="modal-overlay">
+          <div className="glass-panel modal-content" style={{ maxWidth: '500px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Settings className="text-primary" /> Connection Configuration</h2>
               <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsConfigOpen(false)}><X size={18} /></button>
@@ -792,8 +1345,8 @@ export default function App() {
 
       {/* CREATE / EDIT PRODUCT FORM MODAL */}
       {isFormOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', overflowY: 'auto' }}>
-          <form onSubmit={handleFormSave} className="glass-panel" style={{ maxWidth: '650px', width: '100%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div className="modal-overlay">
+          <form onSubmit={handleFormSave} className="glass-panel modal-content">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Tag className="text-primary" /> {formType === 'add' ? 'Create New Product' : 'Modify Product Details'}
@@ -801,8 +1354,8 @@ export default function App() {
               <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsFormOpen(false)}><X size={18} /></button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div style={{ gridColumn: 'span 2' }}>
+            <div className="responsive-grid">
+              <div className="col-span-full">
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>PRODUCT NAME *</label>
                 <input
                   type="text"
@@ -857,42 +1410,166 @@ export default function App() {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>BRAND</label>
-                <select className="form-select" value={formData.brand_id} onChange={e => setFormData(prev => ({ ...prev, brand_id: e.target.value }))}>
-                  <option value="">Select Brand</option>
-                  {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select className="form-select" style={{ flex: 1 }} value={formData.brand_id} onChange={e => setFormData(prev => ({ ...prev, brand_id: e.target.value }))}>
+                    <option value="">Select Brand</option>
+                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                  <button type="button" className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setIsAddBrandOpen(true)} title="Add New Brand">+</button>
+                </div>
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>CATEGORY</label>
-                <select className="form-select" value={formData.category_id} onChange={e => setFormData(prev => ({ ...prev, category_id: e.target.value }))}>
-                  <option value="">Select Category</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select className="form-select" style={{ flex: 1 }} value={formData.category_id} onChange={e => setFormData(prev => ({ ...prev, category_id: e.target.value }))}>
+                    <option value="">Select Category</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <button type="button" className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setIsAddCategoryOpen(true)} title="Add New Category">+</button>
+                </div>
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>SUBCATEGORY</label>
-                <select className="form-select" value={formData.subcategory_id} onChange={e => setFormData(prev => ({ ...prev, subcategory_id: e.target.value }))}>
-                  <option value="">Select Subcategory</option>
-                  {subcategories.filter(s => !formData.category_id || s.category_id === formData.category_id).map(s => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select className="form-select" style={{ flex: 1 }} value={formData.subcategory_id} onChange={e => setFormData(prev => ({ ...prev, subcategory_id: e.target.value }))}>
+                    <option value="">Select Subcategory</option>
+                    {subcategories.filter(s => !formData.category_id || s.category_id === formData.category_id).map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => {
+                    setNewSubcategoryCategory(formData.category_id);
+                    setIsAddSubcategoryOpen(true);
+                  }} title="Add New Subcategory">+</button>
+                </div>
               </div>
 
-              <div style={{ gridColumn: 'span 2' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>IMAGE URL(S) (Comma-separated)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={formData.images}
-                  onChange={e => setFormData(prev => ({ ...prev, images: e.target.value }))}
-                  placeholder="https://example.com/image1.jpg, https://example.com/image2.jpg"
-                />
-              </div>
+              {(() => {
+                const imageList = formData.images
+                  ? formData.images.split(',').map(s => s.trim()).filter(Boolean)
+                  : [];
+                return (
+                  <div className="col-span-full" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: '600' }}>PRODUCT IMAGES</label>
+                    
+                    {/* Previews of existing images */}
+                    {imageList.length > 0 && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))', gap: '10px', marginBottom: '4px' }}>
+                        {imageList.map((url, idx) => (
+                          <div key={url + '-' + idx} style={{ position: 'relative', aspectRatio: '1', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-glass)' }}>
+                            <img src={url} alt={`product-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            <button
+                              type="button"
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: 'rgba(244, 63, 94, 0.85)',
+                                border: 'none',
+                                borderRadius: '50%',
+                                width: '20px',
+                                height: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                color: 'white'
+                              }}
+                              onClick={() => {
+                                const updated = imageList.filter((_, i) => i !== idx);
+                                setFormData(prev => ({ ...prev, images: updated.join(', ') }));
+                              }}
+                              title="Remove image"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
-              <div style={{ gridColumn: 'span 2' }}>
+                    {/* Upload area */}
+                    <div 
+                      style={{
+                        border: '2px dashed var(--border-glass)',
+                        borderRadius: '10px',
+                        padding: '20px',
+                        textAlign: 'center',
+                        background: 'rgba(10, 11, 16, 0.3)',
+                        cursor: isUploadingImages ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.2s ease',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                      }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={async e => {
+                        e.preventDefault();
+                        if (isUploadingImages) return;
+                        const files = Array.from(e.dataTransfer.files);
+                        if (files.length > 0) {
+                          await handleUploadMultiple(files);
+                        }
+                      }}
+                      onClick={() => {
+                        if (!isUploadingImages) {
+                          fileInputRef.current?.click();
+                        }
+                      }}
+                    >
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        multiple
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={async e => {
+                          const files = e.target.files ? Array.from(e.target.files) : [];
+                          if (files.length > 0) {
+                            await handleUploadMultiple(files);
+                          }
+                        }}
+                      />
+                      {isUploadingImages ? (
+                        <>
+                          <Loader2 className="animate-spin text-primary" size={24} />
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Uploading image(s)...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="text-primary" size={24} />
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                            Drag & drop or click to upload images
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                            Supports WebP, JPEG, PNG (Auto-compressed to WebP)
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Fallback/Manual URL Edit Input */}
+                    <div style={{ marginTop: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        Or edit/paste image URLs directly (comma-separated):
+                      </span>
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={formData.images}
+                        onChange={e => setFormData(prev => ({ ...prev, images: e.target.value }))}
+                        placeholder="https://example.com/image1.jpg, https://example.com/image2.jpg"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="col-span-full">
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>PRODUCT DESCRIPTION</label>
                 <textarea
                   rows={3}
@@ -902,7 +1579,69 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ gridColumn: 'span 2', display: 'flex', gap: '20px', flexWrap: 'wrap', marginTop: '10px' }}>
+              {/* Product Size Variants & Stock Section */}
+              <div className="col-span-full" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', marginTop: '10px' }}>
+                <span style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '10px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Sizes / Volume Variants & Stock
+                </span>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {formSizes.map((fs, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        style={{ flex: 2 }}
+                        placeholder="Variant size/volume (e.g. 50ml, 100ml, Standard)"
+                        required
+                        value={fs.size}
+                        onChange={e => {
+                          const updated = [...formSizes];
+                          updated[idx].size = e.target.value;
+                          setFormSizes(updated);
+                        }}
+                      />
+                      <input
+                        type="number"
+                        className="form-input"
+                        style={{ flex: 1 }}
+                        placeholder="Stock qty"
+                        min="0"
+                        required
+                        value={fs.stock}
+                        onChange={e => {
+                          const updated = [...formSizes];
+                          updated[idx].stock = parseInt(e.target.value) || 0;
+                          setFormSizes(updated);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '8px 12px', color: 'var(--accent-rose)' }}
+                        onClick={() => {
+                          setFormSizes(formSizes.filter((_, i) => i !== idx));
+                        }}
+                        title="Remove Variant"
+                        disabled={formSizes.length <= 1}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ width: '100%', marginTop: '10px', padding: '6px', fontSize: '0.85rem', color: 'var(--primary)', borderColor: 'rgba(124,58,237,0.2)' }}
+                  onClick={() => setFormSizes([...formSizes, { size: '', stock: 0 }])}
+                >
+                  <Plus size={14} /> Add Stock Variant
+                </button>
+              </div>
+
+              <div className="col-span-full" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', marginTop: '10px' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <input type="checkbox" checked={formData.is_active} onChange={e => setFormData(prev => ({ ...prev, is_active: e.target.checked }))} style={{ accentColor: 'var(--primary)' }} />
                   Active in Catalog
@@ -927,6 +1666,141 @@ export default function App() {
               <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
                 <Save size={16} /> Save Product
               </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* INLINE BRAND CREATION MODAL */}
+      {isAddBrandOpen && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <form onSubmit={handleCreateBrand} className="glass-panel modal-content" style={{ maxWidth: '400px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Plus className="text-primary" size={18} /> Add New Brand</h3>
+              <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsAddBrandOpen(false)}><X size={16} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>BRAND NAME *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  required
+                  value={newBrandName}
+                  onChange={e => setNewBrandName(e.target.value)}
+                  placeholder="e.g. L'Oreal Paris"
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>DESCRIPTION</label>
+                <textarea
+                  rows={2}
+                  className="form-textarea"
+                  value={newBrandDesc}
+                  onChange={e => setNewBrandDesc(e.target.value)}
+                  placeholder="e.g. French personal care company"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsAddBrandOpen(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save Brand</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* INLINE CATEGORY CREATION MODAL */}
+      {isAddCategoryOpen && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <form onSubmit={handleCreateCategory} className="glass-panel modal-content" style={{ maxWidth: '400px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Plus className="text-primary" size={18} /> Add New Category</h3>
+              <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsAddCategoryOpen(false)}><X size={16} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>CATEGORY NAME *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  required
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  placeholder="e.g. Skincare"
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>DESCRIPTION</label>
+                <textarea
+                  rows={2}
+                  className="form-textarea"
+                  value={newCategoryDesc}
+                  onChange={e => setNewCategoryDesc(e.target.value)}
+                  placeholder="e.g. Cleansers, moisturizers, serums, creams"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsAddCategoryOpen(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save Category</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* INLINE SUBCATEGORY CREATION MODAL */}
+      {isAddSubcategoryOpen && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <form onSubmit={handleCreateSubcategory} className="glass-panel modal-content" style={{ maxWidth: '400px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><Plus className="text-primary" size={18} /> Add New Subcategory</h3>
+              <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => setIsAddSubcategoryOpen(false)}><X size={16} /></button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>PARENT CATEGORY *</label>
+                <select
+                  className="form-select"
+                  required
+                  value={newSubcategoryCategory || formData.category_id}
+                  onChange={e => setNewSubcategoryCategory(e.target.value)}
+                >
+                  <option value="">Select Parent Category</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>SUBCATEGORY NAME *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  required
+                  value={newSubcategoryName}
+                  onChange={e => setNewSubcategoryName(e.target.value)}
+                  placeholder="e.g. Face Wash"
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>DESCRIPTION</label>
+                <textarea
+                  rows={2}
+                  className="form-textarea"
+                  value={newSubcategoryDesc}
+                  onChange={e => setNewSubcategoryDesc(e.target.value)}
+                  placeholder="e.g. Daily foaming facial cleansers"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setIsAddSubcategoryOpen(false)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save Subcategory</button>
             </div>
           </form>
         </div>
