@@ -1629,7 +1629,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
 
           {/* STORE PRODUCTS CATALOG DIRECTORY */}
           <section className={`glass-panel ${activeMobileTab === 'catalog' ? '' : 'hide-on-mobile-inactive'}`} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div className="catalog-header">
               <div>
                 <h2>Store Catalog Directory</h2>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Search, review, edit, or delete items inside the target store inventory database.</p>
@@ -1662,23 +1662,25 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
             ) : filteredProducts.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '500px', overflowY: 'auto', paddingRight: '4px' }}>
                 {filteredProducts.map(product => (
-                  <div key={product.id} className="glass-panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '14px', background: 'rgba(18,20,32,0.4)' }}>
-                    <img
-                      src={product.images?.[0] || "https://placehold.co/100x100"}
-                      alt={product.name}
-                      style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-glass)' }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <h4 style={{ fontSize: '0.98rem', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{product.name}</h4>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                        Rs. {product.price} • {brands.find(b => b.id === product.brand_id)?.name || 'Generic Brand'}
-                      </p>
+                  <div key={product.id} className="glass-panel catalog-item">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0, width: '100%' }}>
+                      <img
+                        src={product.images?.[0] || "https://placehold.co/100x100"}
+                        alt={product.name}
+                        style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '8px', border: '1px solid var(--border-glass)', flexShrink: 0 }}
+                      />
+                      <div className="catalog-item-info" style={{ flex: 1, minWidth: 0 }}>
+                        <h4 style={{ fontSize: '0.98rem', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{product.name}</h4>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          Rs. {product.price} • {brands.find(b => b.id === product.brand_id)?.name || 'Generic Brand'}
+                        </p>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => handleOpenEdit(product)} title="Edit">
+                    <div className="catalog-item-actions" style={{ display: 'flex', gap: '6px' }}>
+                      <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => handleOpenEdit(product)} title="Edit">
                         <Edit size={16} />
                       </button>
-                      <button className="btn btn-secondary" style={{ padding: '6px', color: 'var(--accent-rose)' }} onClick={() => handleDeleteProduct(product)} title="Delete">
+                      <button type="button" className="btn btn-secondary" style={{ padding: '6px', color: 'var(--accent-rose)' }} onClick={() => handleDeleteProduct(product)} title="Delete">
                         <Trash2 size={16} />
                       </button>
                     </div>
