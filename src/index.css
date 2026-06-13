@@ -70,13 +70,13 @@ body {
   margin: 0 auto;
   padding: 24px;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 
 @media (min-width: 1024px) {
   .app-container {
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: 380px minmax(0, 1fr);
   }
 }
 
@@ -121,6 +121,7 @@ body {
 
 .form-input, .form-textarea, .form-select {
   width: 100%;
+  min-width: 0;
   background: rgba(10, 11, 16, 0.7);
   border: 1px solid var(--border-glass);
   border-radius: 10px;
@@ -655,6 +656,11 @@ body {
   background: rgba(18, 20, 32, 0.4);
 }
 
+.catalog-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
 @media (max-width: 580px) {
   .catalog-header {
     flex-direction: column;
@@ -697,7 +703,7 @@ body {
   .app-container {
     padding: 16px;
     padding-bottom: 80px; /* offset for bottom tab bar */
-    grid-template-columns: 1fr !important;
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .hide-on-mobile-inactive {
@@ -706,6 +712,21 @@ body {
   
   .badge-text {
     display: none;
+  }
+}
+
+/* Dashboard Panel Layout styling */
+.dashboard-section {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+@media (max-width: 640px) {
+  .dashboard-section {
+    padding: 16px;
+    gap: 16px;
   }
 }
 

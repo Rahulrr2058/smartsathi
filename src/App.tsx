@@ -1325,7 +1325,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
         {/* MAIN PANEL: Live camera scanner & Catalog View */}
         <main className="app-main">
           {/* CAMERA OCR SCANNER */}
-          <section className={`glass-panel ${activeMobileTab === 'scanner' ? '' : 'hide-on-mobile-inactive'}`} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <section className={`glass-panel dashboard-section ${activeMobileTab === 'scanner' ? '' : 'hide-on-mobile-inactive'}`}>
             
             {/* Scanner Mode Selector */}
             <div className="scanner-mode-selector">
@@ -1628,7 +1628,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
           </section>
 
           {/* STORE PRODUCTS CATALOG DIRECTORY */}
-          <section className={`glass-panel ${activeMobileTab === 'catalog' ? '' : 'hide-on-mobile-inactive'}`} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <section className={`glass-panel dashboard-section ${activeMobileTab === 'catalog' ? '' : 'hide-on-mobile-inactive'}`}>
             <div className="catalog-header">
               <div>
                 <h2>Store Catalog Directory</h2>
@@ -1639,14 +1639,14 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
               </button>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ flex: 1, position: 'relative' }}>
+            <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+              <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                 <Search style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} size={18} />
                 <input
                   type="text"
                   className="form-input"
                   style={{ paddingLeft: '40px' }}
-                  placeholder="Search catalog products by name, brand, or identifier slug..."
+                  placeholder="Search catalog products..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />
@@ -1676,7 +1676,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
                         </p>
                       </div>
                     </div>
-                    <div className="catalog-item-actions" style={{ display: 'flex', gap: '6px' }}>
+                    <div className="catalog-item-actions">
                       <button type="button" className="btn btn-secondary" style={{ padding: '6px' }} onClick={() => handleOpenEdit(product)} title="Edit">
                         <Edit size={16} />
                       </button>
