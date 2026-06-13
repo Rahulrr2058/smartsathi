@@ -1354,7 +1354,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
               </button>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <div className="scanner-header">
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {scanMode === 'ai' ? (
@@ -1976,7 +1976,7 @@ Return a valid JSON object ONLY, with no markdown formatting and no backticks. T
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {formSizes.map((fs, idx) => (
-                    <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <div key={idx} className="variant-row">
                       <input
                         type="text"
                         className="form-input"
