@@ -83,7 +83,12 @@ export default function App() {
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('sathi_crm_url') || DEFAULT_URL);
   const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('sathi_crm_key') || DEFAULT_KEY);
   const [storeId, setStoreId] = useState(() => localStorage.getItem('sathi_crm_store_id') || DEFAULT_STORE_ID);
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('sathi_crm_gemini_key') || DEFAULT_GEMINI_KEY || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => 
+    localStorage.getItem('sathi_crm_gemini_key') || 
+    DEFAULT_GEMINI_KEY || 
+    (import.meta.env.VITE_GEMINI_KEY as string) || 
+    ''
+  );
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [dbClient, setDbClient] = useState<SupabaseClient | null>(null);
   const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected');
