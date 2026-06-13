@@ -32,7 +32,8 @@ import { createWorker } from 'tesseract.js';
 // Fallback Sagarmatha Cosmetics Credentials
 const DEFAULT_URL = "https://zzjxgkrzpakbrleeduhq.supabase.co";
 const DEFAULT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp6anhna3J6cGFrYnJsZWVkdWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwODMxODgsImV4cCI6MjA5NTY1OTE4OH0.v1Nhqm4BlDp7fdcNExgVx9Bl4eLRIihI6xfJe5su0zo";
-const DEFAULT_STORE_ID = "b0298a16-4ba9-4f36-8aee-d853785213a2"; // Sagarmatha Cosmetics store ID
+const DEFAULT_STORE_ID = "b0298a16-4ba9-4f36-8aee-d853785213a2";
+const DEFAULT_GEMINI_KEY = "";
 
 interface ProductSize {
   id?: string;
@@ -82,7 +83,7 @@ export default function App() {
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('sathi_crm_url') || DEFAULT_URL);
   const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('sathi_crm_key') || DEFAULT_KEY);
   const [storeId, setStoreId] = useState(() => localStorage.getItem('sathi_crm_store_id') || DEFAULT_STORE_ID);
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('sathi_crm_gemini_key') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('sathi_crm_gemini_key') || DEFAULT_GEMINI_KEY || '');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [dbClient, setDbClient] = useState<SupabaseClient | null>(null);
   const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected');
