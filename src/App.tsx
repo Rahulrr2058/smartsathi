@@ -22,9 +22,12 @@ import {
   LogOut,
   Mail,
   Lock,
-  Upload
+  Upload,
+  Sparkles,
+  Image as ImageIcon
 } from 'lucide-react';
 import { createWorker } from 'tesseract.js';
+
 
 // Fallback Sagarmatha Cosmetics Credentials
 const DEFAULT_URL = "https://zzjxgkrzpakbrleeduhq.supabase.co";
@@ -79,9 +82,16 @@ export default function App() {
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('sathi_crm_url') || DEFAULT_URL);
   const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('sathi_crm_key') || DEFAULT_KEY);
   const [storeId, setStoreId] = useState(() => localStorage.getItem('sathi_crm_store_id') || DEFAULT_STORE_ID);
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('sathi_crm_gemini_key') || '');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [dbClient, setDbClient] = useState<SupabaseClient | null>(null);
   const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected');
+
+  // Scanner/AI Vision Config & Refs
+  const [scanMode, setScanMode] = useState<'ocr' | 'ai'>('ai');
+  const [aiExtractedData, setAiExtractedData] = useState<any>(null);
+  const [activeMobileTab, setActiveMobileTab] = useState<'scanner' | 'catalog' | 'config'>('scanner');
+  const fileInputScannerRef = useRef<HTMLInputElement | null>(null);
 
   // Authentication Configuration
   const [session, setSession] = useState<any>(null);
@@ -304,6 +314,7 @@ export default function App() {
     localStorage.setItem('sathi_crm_url', supabaseUrl);
     localStorage.setItem('sathi_crm_key', supabaseKey);
     localStorage.setItem('sathi_crm_store_id', storeId);
+    localStorage.setItem('sathi_crm_gemini_key', geminiApiKey);
     setIsConfigOpen(false);
     if (supabaseUrl && supabaseKey) {
       const client = createClient(supabaseUrl, supabaseKey);
@@ -385,9 +396,9 @@ export default function App() {
     return maxLength === 0 ? 1.0 : 1.0 - distance / maxLength;
   };
 
-  // Capture video frame and run OCR within a cropped central region
+  // Capture video frame and run either OCR or AI scan
   const captureAndScan = async () => {
-    if (!videoRef.current || !canvasRef.current || !ocrWorkerRef.current || isOcrLoading) return;
+    if (!videoRef.current || !canvasRef.current || isOcrLoading) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -403,7 +414,7 @@ export default function App() {
     const cropX = Math.round((vWidth - cropW) / 2);
     const cropY = Math.round((vHeight - cropH) / 2);
 
-    // Scale up the crop by 1.5x for higher OCR text resolution
+    // Scale up the crop by 1.5x for higher resolution
     const scale = 1.5;
     canvas.width = Math.round(cropW * scale);
     canvas.height = Math.round(cropH * scale);
@@ -421,47 +432,221 @@ export default function App() {
       canvas.height
     );
 
-    // Apply adaptive contrast thresholding on the crop to normalize lighting
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imgData.data;
-    
-    // Calculate average luminance to adapt the threshold dynamically
-    let totalGray = 0;
-    const len = data.length;
-    for (let i = 0; i < len; i += 4) {
-      const r = data[i];
-      const g = data[i+1];
-      const b = data[i+2];
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      totalGray += gray;
-    }
-    const avgGray = totalGray / (len / 4);
-    
-    // Adaptive threshold based on average luminance (clamped between 50 and 200)
-    const threshold = Math.max(50, Math.min(200, avgGray * 0.9));
-
-    // Apply dynamic thresholding
-    for (let i = 0; i < len; i += 4) {
-      const r = data[i];
-      const g = data[i+1];
-      const b = data[i+2];
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (scanMode === 'ai') {
+      const base64Image = canvas.toDataURL('image/jpeg', 0.85);
+      await runGeminiVision(base64Image);
+    } else {
+      // Apply adaptive contrast thresholding on the crop to normalize lighting
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imgData.data;
       
-      const value = gray > threshold ? 255 : 0;
-      data[i] = value;
-      data[i+1] = value;
-      data[i+2] = value;
+      // Calculate average luminance to adapt the threshold dynamically
+      let totalGray = 0;
+      const len = data.length;
+      for (let i = 0; i < len; i += 4) {
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        totalGray += gray;
+      }
+      const avgGray = totalGray / (len / 4);
+      
+      // Adaptive threshold based on average luminance (clamped between 50 and 200)
+      const threshold = Math.max(50, Math.min(200, avgGray * 0.9));
+
+      // Apply dynamic thresholding
+      for (let i = 0; i < len; i += 4) {
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        const value = gray > threshold ? 255 : 0;
+        data[i] = value;
+        data[i+1] = value;
+        data[i+2] = value;
+      }
+      ctx.putImageData(imgData, 0, 0);
+
+      setIsOcrLoading(true);
+
+      try {
+        if (!ocrWorkerRef.current) {
+          alert("OCR worker is initializing. Please try again in a moment.");
+          return;
+        }
+        const { data: { text } } = await ocrWorkerRef.current.recognize(canvas);
+        processScannedText(text);
+      } catch (err) {
+        console.error("OCR scan error:", err);
+      } finally {
+        setIsOcrLoading(false);
+      }
     }
-    ctx.putImageData(imgData, 0, 0);
+  };
+
+  // Run Gemini Vision API scan
+  const runGeminiVision = async (base64Image: string) => {
+    if (!geminiApiKey) {
+      alert("Please configure your Gemini API Key in Settings.");
+      return;
+    }
+
+    setIsOcrLoading(true);
+    setScanResult('idle');
+    setMatchedProduct(null);
+    setAiExtractedData(null);
+
+    // Prepare lists to help Gemini categorize
+    const brandList = brands.map(b => ({ id: b.id, name: b.name }));
+    const categoryList = categories.map(c => ({ id: c.id, name: c.name }));
+    const subcategoryList = subcategories.map(s => ({ id: s.id, name: s.name, category_id: s.category_id }));
+
+    const prompt = `Analyze this product label image. Identify the brand, product name, size/volume variants, price, and description.
+We have these existing taxonomies in our database. If they match the product in the image, use their exact IDs.
+Brands: ${JSON.stringify(brandList)}
+Categories: ${JSON.stringify(categoryList)}
+Subcategories: ${JSON.stringify(subcategoryList)}
+
+Return a valid JSON object ONLY, with no markdown formatting and no backticks. The JSON must have this exact structure:
+{
+  "name": "Full product name (e.g. Mamaearth Vitamin C Serum)",
+  "description": "Brief description of the product and its usage",
+  "price": number (the price/MRP in Rs. if found, or a reasonable estimate),
+  "original_price": number (original price if a discount is indicated, otherwise null),
+  "brand_id": "matching Brand ID from database, or null if no brand matches",
+  "category_id": "matching Category ID from database, or null if no category matches",
+  "subcategory_id": "matching Subcategory ID from database, or null if no subcategory matches",
+  "sizes": [
+    { "size": "size/volume (e.g., 50ml, 100g, Standard)", "stock": 10 }
+  ]
+}`;
+
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
+      
+      // Clean base64 string
+      const cleanBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: cleanBase64
+                  }
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            responseMimeType: "application/json"
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini API error: ${response.statusText} (${response.status}) - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (!textResponse) {
+        throw new Error("No response content from Gemini.");
+      }
+
+      const result = JSON.parse(textResponse.trim());
+      processGeminiResult(result);
+
+    } catch (err: any) {
+      console.error("Gemini Vision scan failed:", err);
+      alert(`AI Scan failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsOcrLoading(false);
+    }
+  };
+
+  const processGeminiResult = (result: any) => {
+    setAiExtractedData(result);
+    const detectedName = result.name || "";
+    setScannedText(detectedName);
+
+    if (!detectedName) {
+      setScanResult('no_match');
+      setMatchedProduct(null);
+      return;
+    }
+
+    // Try matching using fuzzy matching against our local products
+    let bestProduct: Product | null = null;
+    let highestScore = 0;
+
+    products.forEach(product => {
+      const productNameLower = product.name.toLowerCase();
+      const detectedNameLower = detectedName.toLowerCase();
+      
+      const sim = getSimilarity(detectedNameLower, productNameLower);
+      if (sim > highestScore) {
+        highestScore = sim;
+        bestProduct = product;
+      }
+    });
+
+    // We consider score >= 0.75 (75% similarity) to be a valid match
+    if (bestProduct && highestScore >= 0.75) {
+      setMatchedProduct(bestProduct);
+      setScanResult('match');
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.8 },
+        colors: ['#a855f7', '#10b981', '#f59e0b']
+      });
+    } else {
+      setMatchedProduct(null);
+      setScanResult('no_match');
+    }
+  };
+
+  const handleScannerFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
     setIsOcrLoading(true);
 
     try {
-      const { data: { text } } = await ocrWorkerRef.current.recognize(canvas);
-      processScannedText(text);
-    } catch (err) {
-      console.error("OCR scan error:", err);
-    } finally {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64Image = event.target?.result as string;
+        
+        if (scanMode === 'ai') {
+          await runGeminiVision(base64Image);
+        } else {
+          if (!ocrWorkerRef.current) {
+            alert("OCR worker is not ready yet. Please wait.");
+            setIsOcrLoading(false);
+            return;
+          }
+          const { data: { text } } = await ocrWorkerRef.current.recognize(base64Image);
+          processScannedText(text);
+          setIsOcrLoading(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      console.error("File scanning failed:", err);
+      alert(`File scanning failed: ${err.message || 'Unknown error'}`);
       setIsOcrLoading(false);
     }
   };
@@ -547,24 +732,48 @@ export default function App() {
   // Form handlers
   const handleOpenAdd = () => {
     setFormType('add');
-    // Pre-populate product name with detected keywords to save time!
-    const guessName = detectedKeywords.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    setFormData({
-      name: guessName || '',
-      slug: guessName ? guessName.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
-      description: '',
-      price: '',
-      original_price: '',
-      images: '',
-      is_active: true,
-      is_featured: false,
-      is_new: true,
-      is_clearance: false,
-      category_id: categories[0]?.id || '',
-      brand_id: brands[0]?.id || '',
-      subcategory_id: subcategories[0]?.id || ''
-    });
-    setFormSizes([{ size: 'Standard', stock: 10 }]);
+    if (scanMode === 'ai' && aiExtractedData) {
+      const name = aiExtractedData.name || '';
+      setFormData({
+        name: name,
+        slug: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        description: aiExtractedData.description || '',
+        price: aiExtractedData.price ? aiExtractedData.price.toString() : '',
+        original_price: aiExtractedData.original_price ? aiExtractedData.original_price.toString() : '',
+        images: '',
+        is_active: true,
+        is_featured: false,
+        is_new: true,
+        is_clearance: false,
+        category_id: aiExtractedData.category_id || categories[0]?.id || '',
+        brand_id: aiExtractedData.brand_id || brands[0]?.id || '',
+        subcategory_id: aiExtractedData.subcategory_id || subcategories[0]?.id || ''
+      });
+      setFormSizes(
+        aiExtractedData.sizes && aiExtractedData.sizes.length > 0
+          ? aiExtractedData.sizes.map((s: any) => ({ size: s.size, stock: s.stock || 10 }))
+          : [{ size: 'Standard', stock: 10 }]
+      );
+    } else {
+      // Pre-populate product name with detected keywords to save time!
+      const guessName = detectedKeywords.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      setFormData({
+        name: guessName || '',
+        slug: guessName ? guessName.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+        description: '',
+        price: '',
+        original_price: '',
+        images: '',
+        is_active: true,
+        is_featured: false,
+        is_new: true,
+        is_clearance: false,
+        category_id: categories[0]?.id || '',
+        brand_id: brands[0]?.id || '',
+        subcategory_id: subcategories[0]?.id || ''
+      });
+      setFormSizes([{ size: 'Standard', stock: 10 }]);
+    }
     setIsFormOpen(true);
   };
 
@@ -973,7 +1182,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', textAlign: 'center' }}>
+          <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '16px', textAlign: 'center' }}>
             <button
               type="button"
               className="btn btn-secondary"
@@ -982,7 +1191,7 @@ export default function App() {
             >
               <Settings size={14} /> Connection Settings
             </button>
-          </div> */}
+          </div>
         </div>
 
         {/* CONNECTION SETTINGS MODAL IN LOGIN SCREEN */}
@@ -1007,6 +1216,10 @@ export default function App() {
                   <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>MERCHANT STORE ID (UUID)</label>
                   <input type="text" className="form-input" value={storeId} onChange={e => setStoreId(e.target.value)} placeholder="b0298a16-..." />
                 </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>GEMINI API KEY (FOR AI VISION)</label>
+                  <input type="password" className="form-input" value={geminiApiKey} onChange={e => setGeminiApiKey(e.target.value)} placeholder="AIzaSy..." />
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
@@ -1030,7 +1243,7 @@ export default function App() {
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <span className={`badge ${dbStatus === 'connected' ? 'badge-emerald' : dbStatus === 'testing' ? 'badge-amber' : 'badge-rose'}`}>
               <Database size={12} />
-              {dbStatus === 'connected' ? 'DB Connected' : dbStatus === 'testing' ? 'Testing Connection' : 'DB Offline'}
+              <span className="badge-text">{dbStatus === 'connected' ? 'Connected' : dbStatus === 'testing' ? 'Testing' : 'Offline'}</span>
             </span>
             <button className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={() => setIsConfigOpen(true)} title="Connection Settings">
               <Settings size={18} />
@@ -1042,9 +1255,34 @@ export default function App() {
         </div>
       </header>
 
+      {/* Mobile Navigation Tabs */}
+      <div className="mobile-tabs-nav">
+        <button 
+          className={`mobile-tab-btn ${activeMobileTab === 'scanner' ? 'active' : ''}`}
+          onClick={() => setActiveMobileTab('scanner')}
+        >
+          <Sparkles size={18} />
+          <span>Scanner</span>
+        </button>
+        <button 
+          className={`mobile-tab-btn ${activeMobileTab === 'catalog' ? 'active' : ''}`}
+          onClick={() => setActiveMobileTab('catalog')}
+        >
+          <Package size={18} />
+          <span>Catalog</span>
+        </button>
+        <button 
+          className={`mobile-tab-btn ${activeMobileTab === 'config' ? 'active' : ''}`}
+          onClick={() => setActiveMobileTab('config')}
+        >
+          <Settings size={18} />
+          <span>Setup</span>
+        </button>
+      </div>
+
       <div className="app-container">
         {/* SIDE PANEL: Configuration & Quick Stats */}
-        <aside style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <aside className={`app-aside ${activeMobileTab === 'config' ? '' : 'hide-on-mobile-inactive'}`}>
           <div className="glass-panel" style={{ padding: '20px' }}>
             <h2 style={{ fontSize: '1.2rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Database size={18} className="text-primary" /> Setup Connection
@@ -1079,19 +1317,73 @@ export default function App() {
         </aside>
 
         {/* MAIN PANEL: Live camera scanner & Catalog View */}
-        <main style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <main className="app-main">
           {/* CAMERA OCR SCANNER */}
-          <section className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <section className={`glass-panel ${activeMobileTab === 'scanner' ? '' : 'hide-on-mobile-inactive'}`} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* Scanner Mode Selector */}
+            <div className="scanner-mode-selector">
+              <button
+                type="button"
+                className={`mode-btn ${scanMode === 'ai' ? 'active' : ''}`}
+                onClick={() => {
+                  setScanMode('ai');
+                  setScanResult('idle');
+                  setMatchedProduct(null);
+                  setAiExtractedData(null);
+                }}
+              >
+                <Sparkles size={16} /> Gemini AI Vision
+              </button>
+              <button
+                type="button"
+                className={`mode-btn ${scanMode === 'ocr' ? 'active' : ''}`}
+                onClick={() => {
+                  setScanMode('ocr');
+                  setScanResult('idle');
+                  setMatchedProduct(null);
+                }}
+              >
+                <Camera size={16} /> Local OCR Scanner
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Camera className="text-primary" /> Camera OCR Product Recognition
+                  {scanMode === 'ai' ? (
+                    <>
+                      <Sparkles className="text-primary" /> Gemini AI Vision Scanner
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="text-primary" /> Camera OCR Recognition
+                    </>
+                  )}
                 </h2>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                  Hold a product label up to the lens. The smart scan reads product names using computer vision.
+                  {scanMode === 'ai' 
+                    ? "Upload or capture a photo. Gemini AI will automatically extract details (name, price, sizes, desc) and search our catalog."
+                    : "Hold a product label up to the lens. The smart scan reads product names using local OCR."
+                  }
                 </p>
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputScannerRef}
+                  style={{ display: 'none' }}
+                  onChange={handleScannerFileUpload}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => fileInputScannerRef.current?.click()}
+                  disabled={isOcrLoading}
+                >
+                  <ImageIcon size={18} />
+                  <span>Upload / Photo</span>
+                </button>
                 <button
                   className={`btn ${isCameraActive ? 'btn-danger' : 'btn-primary'}`}
                   onClick={() => setIsCameraActive(!isCameraActive)}
@@ -1101,6 +1393,22 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {scanMode === 'ai' && !geminiApiKey && (
+              <div className="auth-error-alert" style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-amber)', borderColor: 'rgba(245, 158, 11, 0.2)' }}>
+                <AlertTriangle size={18} style={{ flexShrink: 0 }} />
+                <span>
+                  Gemini API Key is not set. Please add it in 
+                  <button 
+                    onClick={() => setIsConfigOpen(true)} 
+                    style={{ background: 'none', border: 'none', color: 'var(--primary)', textDecoration: 'underline', padding: '0 4px', cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    Connection Settings
+                  </button> 
+                  to use AI Vision.
+                </span>
+              </div>
+            )}
 
             {isCameraActive ? (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
@@ -1125,30 +1433,61 @@ export default function App() {
                       <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Live Camera Feed Active</span>
                     </div>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={autoScan}
-                          onChange={(e) => setAutoScan(e.target.checked)}
-                          style={{ accentColor: 'var(--primary)' }}
-                        />
-                        Continuous Auto-Scan (3s)
-                      </label>
-                      <button className="btn btn-secondary" onClick={captureAndScan} disabled={isOcrLoading}>
+                      {scanMode === 'ocr' && (
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={autoScan}
+                            onChange={(e) => setAutoScan(e.target.checked)}
+                            style={{ accentColor: 'var(--primary)' }}
+                          />
+                          Continuous Auto-Scan (3s)
+                        </label>
+                      )}
+                      <button className="btn btn-secondary" onClick={captureAndScan} disabled={isOcrLoading || (scanMode === 'ai' && !geminiApiKey)}>
                         {isOcrLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                        Manual Snap & OCR
+                        {scanMode === 'ai' ? 'Analyze with Gemini' : 'Manual Snap & OCR'}
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
             ) : (
-              <div style={{ border: '2px dashed var(--border-glass)', borderRadius: '14px', height: '240px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+              <div 
+                style={{ 
+                  border: '2px dashed var(--border-glass)', 
+                  borderRadius: '14px', 
+                  height: '240px', 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '12px',
+                  background: 'rgba(10, 11, 16, 0.3)',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  if (!isCameraActive) {
+                    setIsCameraActive(true);
+                  }
+                }}
+              >
                 <Camera size={48} style={{ color: 'var(--text-muted)' }} />
                 <p style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>Camera is currently disabled</p>
-                <button className="btn btn-primary" onClick={() => setIsCameraActive(true)}>
-                  Start Scanner
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button className="btn btn-primary" onClick={(e) => { e.stopPropagation(); setIsCameraActive(true); }}>
+                    Start Live Video
+                  </button>
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      fileInputScannerRef.current?.click(); 
+                    }}
+                  >
+                    <ImageIcon size={16} /> Choose Photo
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1168,7 +1507,6 @@ export default function App() {
                     </div>
                     <div className="match-card">
                       <div className="match-image-container">
-                        <img src={matchedProduct.images[0]} alt={matchedProduct.name} className="match-image" />
                         <img
                           src={matchedProduct.images?.[0] || "https://placehold.co/400x400/png?text=No+Image"}
                           alt={matchedProduct.name}
@@ -1226,18 +1564,57 @@ export default function App() {
                   </div>
                 ) : (
                   <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <AlertTriangle className="text-rose" size={20} />
-                        <span style={{ fontWeight: '700', color: 'var(--accent-rose)' }}>No Direct Product Match Found</span>
+                        <span style={{ fontWeight: '700', color: 'var(--accent-rose)' }}>No Match Found in Catalog</span>
                       </div>
                       <button className="btn btn-primary" onClick={handleOpenAdd}>
-                        <Plus size={16} /> Create New Product
+                        <Plus size={16} /> Create New Product {scanMode === 'ai' && aiExtractedData ? '(AI Prefilled)' : ''}
                       </button>
                     </div>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '10px' }}>
-                      Read Text: <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px', color: 'var(--text-primary)' }}>{scannedText}</code>
-                    </p>
+
+                    {scanMode === 'ai' && aiExtractedData ? (
+                      <div style={{ background: 'rgba(255, 255, 255, 0.03)', borderRadius: '10px', padding: '16px', border: '1px solid var(--border-glass)' }}>
+                        <h4 style={{ color: 'var(--primary)', fontSize: '0.9rem', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Sparkles size={14} /> AI Extracted Product Details (Autofill Ready):
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.88rem' }}>
+                          <div className="col-span-full">
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.75rem' }}>Name</span>
+                            <span style={{ fontWeight: '600' }}>{aiExtractedData.name}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.75rem' }}>Estimated Price</span>
+                            <span style={{ fontWeight: '600', color: 'var(--accent-emerald)' }}>Rs. {aiExtractedData.price || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.75rem' }}>Original Price</span>
+                            <span style={{ fontWeight: '600' }}>Rs. {aiExtractedData.original_price || 'N/A'}</span>
+                          </div>
+                          <div className="col-span-full">
+                            <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.75rem' }}>Suggested Description</span>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: '1.4' }}>{aiExtractedData.description || 'No description extracted.'}</p>
+                          </div>
+                          {aiExtractedData.sizes && aiExtractedData.sizes.length > 0 && (
+                            <div className="col-span-full">
+                              <span style={{ color: 'var(--text-secondary)', display: 'block', fontSize: '0.75rem', marginBottom: '4px' }}>Extracted Variants</span>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                {aiExtractedData.sizes.map((s: any, i: number) => (
+                                  <span key={i} style={{ background: 'rgba(255,255,255,0.06)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                                    {s.size} (Stock: {s.stock || 10})
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                        Read Text: <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px', color: 'var(--text-primary)' }}>{scannedText}</code>
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -1245,7 +1622,7 @@ export default function App() {
           </section>
 
           {/* STORE PRODUCTS CATALOG DIRECTORY */}
-          <section className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <section className={`glass-panel ${activeMobileTab === 'catalog' ? '' : 'hide-on-mobile-inactive'}`} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
               <div>
                 <h2>Store Catalog Directory</h2>
@@ -1332,6 +1709,10 @@ export default function App() {
               <div>
                 <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>MERCHANT STORE ID (UUID)</label>
                 <input type="text" className="form-input" value={storeId} onChange={e => setStoreId(e.target.value)} placeholder="b0298a16-..." />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: '500' }}>GEMINI API KEY (FOR AI VISION)</label>
+                <input type="password" className="form-input" value={geminiApiKey} onChange={e => setGeminiApiKey(e.target.value)} placeholder="AIzaSy..." />
               </div>
             </div>
 
